@@ -1,0 +1,41 @@
+name: CSV Reader kit validation
+on:
+  push:
+    branches: [codex/csv-reader-kit-validation]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Download official kit
+        run: |
+          curl -fsSL --retry 3 --max-time 120 https://make.fun/c/csv-reader-speed-01-run-20261121/kit -o "$RUNNER_TEMP/csv-kit.tar.gz"
+          mkdir "$RUNNER_TEMP/csv-kit"
+          tar -xzf "$RUNNER_TEMP/csv-kit.tar.gz" -C "$RUNNER_TEMP/csv-kit"
+          rules_file=$(find "$RUNNER_TEMP/csv-kit" -name RULES.txt -print -quit)
+          test -n "$rules_file"
+          printf 'CSV_KIT_DIR=%s\n' "$(dirname "$rules_file")" >> "$GITHUB_ENV"
+          rg -n 'grade-local|node22|CPU time' "$rules_file" | cut -c1-200 | head -n 25 || true
+      - name: Compare candidate with reference
+        run: |
+          git show dee620f:solve.js > "$RUNNER_TEMP/makefun-original.mjs"
+          node verify.mjs "$CSV_KIT_DIR" "$RUNNER_TEMP/makefun-original.mjs"
+      - name: Run official grader twice
+        if: always()
+        run: |
+          test -n "$CSV_KIT_DIR"
+          cd "$CSV_KIT_DIR"
+          failures=0
+          for replay in 1 2; do
+            node cli/makefun.mjs grade-local --kit . --bot "$GITHUB_WORKSPACE" --driver docker || failures=1
+          done
+          exit "$failures"
