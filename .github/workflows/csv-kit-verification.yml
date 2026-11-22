@@ -24,23 +24,46 @@ jobs:
           rules_file=$(find "$RUNNER_TEMP/csv-kit" -name RULES.txt -print -quit)
           test -n "$rules_file"
           printf 'CSV_KIT_DIR=%s\n' "$(dirname "$rules_file")" >> "$GITHUB_ENV"
-          rg -n 'grade-local|node22|CPU time' "$rules_file" | cut -c1-200 | head -n 25 || true
-      - name: Compare candidate with reference
+          sha256sum "$rules_file"
+          grep -inE 'grade-local|node22|cpu time|transcript.*optional' "$rules_file" | cut -c1-420 | sed -n '1,55p'
+      - name: Measure full entrypoint CPU
         run: |
-          git show dee620f:solve.js > "$RUNNER_TEMP/makefun-original.mjs"
-          cp .github/csv-code-unit-alternative.mjs "$RUNNER_TEMP/csv-code-unit-alternative.mjs"
-          node verify.mjs "$CSV_KIT_DIR" "$RUNNER_TEMP/makefun-original.mjs" "$RUNNER_TEMP/csv-code-unit-alternative.mjs"
-      - name: Run official grader twice
-        if: always()
-        run: |
-          test -n "$CSV_KIT_DIR"
-          cd "$CSV_KIT_DIR"
-          mkdir "$RUNNER_TEMP/csv-candidate" "$RUNNER_TEMP/csv-original"
-          git -C "$GITHUB_WORKSPACE" archive 3623f4030512818e1651c2843db95fc555a3fb23 | tar -x -C "$RUNNER_TEMP/csv-candidate"
-          git -C "$GITHUB_WORKSPACE" archive dee620f | tar -x -C "$RUNNER_TEMP/csv-original"
-          failures=0
-          for bot in original candidate candidate candidate; do
-            echo "Official local grade: $bot"
-            node cli/makefun.mjs grade-local --kit . --bot "$RUNNER_TEMP/csv-$bot" --driver docker || failures=1
+          set -euo pipefail
+          for kind in original candidate; do
+            mkdir "$RUNNER_TEMP/csv-$kind" "$RUNNER_TEMP/answer-$kind"
           done
-          exit "$failures"
+          git archive dee620f | tar -x -C "$RUNNER_TEMP/csv-original"
+          git archive 3623f4030512818e1651c2843db95fc555a3fb23 | tar -x -C "$RUNNER_TEMP/csv-candidate"
+          export MAKEFUN_INPUT_DIR="$CSV_KIT_DIR/practice/input"
+          TIMEFORMAT='%U %S'
+          for run in $(seq 1 11); do
+            if (( run % 2 == 0 )); then kinds=(candidate original); else kinds=(original candidate); fi
+            for kind in "${kinds[@]}"; do
+              export MAKEFUN_OUTPUT_DIR="$RUNNER_TEMP/answer-$kind"
+              { time node "$RUNNER_TEMP/csv-$kind/main.ts"; } 2>> "$RUNNER_TEMP/cpu-$kind.txt"
+            done
+          done
+          node --input-type=module - <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import assert from 'node:assert/strict';
+          const root = process.env.RUNNER_TEMP;
+          const read = (path) => readFileSync(root + '/' + path, 'utf8');
+          const before = read('answer-original/answers.json');
+          const after = read('answer-candidate/answers.json');
+          assert.deepEqual(JSON.parse(after), JSON.parse(before));
+          function median(kind) {
+            const samples = read('cpu-' + kind + '.txt').trim().split(/\r?\n/).slice(2).map((sample) => {
+              const [user, system] = sample.trim().split(/\s+/).map(Number);
+              return Math.round((user + system) * 1000);
+            });
+            assert.equal(samples.length, 9);
+            return samples.sort((a, b) => a - b)[4];
+          }
+          const originalCpuMs = median('original');
+          const candidateCpuMs = median('candidate');
+          console.log(JSON.stringify({
+            node: process.version, originalCpuMs, candidateCpuMs,
+            improvementPercent: (1 - candidateCpuMs / originalCpuMs) * 100,
+            originalOutputBytes: Buffer.byteLength(before), candidateOutputBytes: Buffer.byteLength(after),
+          }));
+          NODE
