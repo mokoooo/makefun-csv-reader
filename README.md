@@ -9,9 +9,8 @@ A dependency-free Node.js 22 entry for make.fun's broken CSV benchmark.
 expression to scan plain spans and an index search to read quoted fields.
 `main.ts` writes compact JSON for every case.
 
-This branch is a performance candidate pending comparison with the official
-reference implementation. The original entry was developed with Muse and
-Mistral Vibe. This branch's changes were developed with Codex.
+The original entry was developed with Muse and Mistral Vibe. Codex developed
+the parser and verification changes on this branch.
 
 ## Verify
 

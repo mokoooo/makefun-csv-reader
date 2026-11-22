@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { setFlagsFromString } from 'node:v8';
 
-const [kit, originalPath] = process.argv.slice(2);
+const [kit, originalPath, alternativePath] = process.argv.slice(2);
 if (!kit || !originalPath) throw new Error('Usage: node verify.mjs <kit directory> <original solve.js>');
 setFlagsFromString('--no-incremental-marking');
 
@@ -12,6 +12,7 @@ const load = (path) => import(pathToFileURL(resolve(path)));
 const { run } = await import('./solve.js');
 const { run: reference } = await load(resolve(kit, 'baselines/csv-reader/solve.js'));
 const { run: original } = await load(originalPath);
+const alternative = alternativePath ? (await load(alternativePath)).run : null;
 const practice = JSON.parse(readFileSync(resolve(kit, 'practice/input/cases.json'), 'utf8'));
 
 let checked = 0;
@@ -20,6 +21,9 @@ function compare(input, label) {
   const want = reference(input);
   const got = run(input);
   checked++;
+  if (alternative && !isDeepStrictEqual(alternative(input), want)) {
+    throw new Error('Alternative scanner disagrees with the reference on ' + label);
+  }
   if (isDeepStrictEqual(got, want)) return true;
   if (mismatches++ < 12) {
     const part = ['columns', 'rows', 'errors'].find((key) => !isDeepStrictEqual(got[key], want[key]));
@@ -60,7 +64,7 @@ for (let i = 0; i < 2000; i++) {
 console.log(JSON.stringify({ node: process.version, practicePassed, totalPractice: practice.length, checked, mismatches }));
 
 if (mismatches === 0) {
-  const parsers = [original, run, reference];
+  const parsers = alternative ? [original, run, reference, alternative] : [original, run, reference];
   const samples = parsers.map(() => []);
   const expected = practice.map(({ input }) => reference(input));
   for (let round = 0; round < 11; round++) {
@@ -73,8 +77,8 @@ if (mismatches === 0) {
       if (round > 1) samples[index].push(usage.user + usage.system);
     }
   }
-  const [originalCpuUs, candidateCpuUs, referenceCpuUs] = samples.map((s) => s.sort((a, b) => a - b)[4]);
+  const [originalCpuUs, candidateCpuUs, referenceCpuUs, codeUnitScanCpuUs] = samples.map((s) => s.sort((a, b) => a - b)[4]);
   console.log(JSON.stringify({ measurement: 'CPU microseconds, parse plus compact serialization', originalCpuUs, candidateCpuUs,
-    referenceCpuUs, improvementPercent: 100 * (originalCpuUs - candidateCpuUs) / originalCpuUs }));
+    referenceCpuUs, codeUnitScanCpuUs, improvementPercent: 100 * (originalCpuUs - candidateCpuUs) / originalCpuUs }));
 }
 if (mismatches) process.exitCode = 1;
