@@ -1,4 +1,6 @@
-export function run({ text, header }) {
+export function run(input) {
+  const text = String(input.text);
+  const header = input.header === true;
   const rows = [];
   const errors = [];
   const length = text.length;
@@ -20,12 +22,13 @@ export function run({ text, header }) {
     const row = header && columns === null ? null : rows.length;
     const fields = [];
     let delimiter;
+    let quoted;
 
     do {
       let value = '';
-      let quoted = false;
+      quoted = text.charCodeAt(pos) === 34;
 
-      if (text.charCodeAt(pos) === 34) {
+      if (quoted) {
         const opening = pos;
         let start = opening + 1;
         let close = text.indexOf('"', start);
@@ -38,8 +41,8 @@ export function run({ text, header }) {
         if (close === -1) {
           errors.push({ code: 'unterminated_quote', line: recordLine, row });
           value = '';
+          quoted = false;
         } else {
-          quoted = true;
           value += text.slice(start, close);
           value = value.replace(/\r\n?|\n/g, () => {
             line++;
@@ -79,7 +82,7 @@ export function run({ text, header }) {
       }
     } while (delimiter === 44);
 
-    if (fields.length === 1 && fields[0] === '') continue;
+    if (fields.length === 1 && fields[0] === '' && !quoted) continue;
     if (width === -1) width = fields.length;
     if (header && columns === null) {
       columns = fields;
